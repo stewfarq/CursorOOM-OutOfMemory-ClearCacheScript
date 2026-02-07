@@ -79,18 +79,28 @@ switch ($choice) {
     Push-Location $proj
     try {
       npx tsx scripts/prune-state-vscdb.ts --analyze
+      do {
       Write-Host ""
-      Write-Host "--- Delete keys by pattern (run with Cursor closed) ---" -ForegroundColor Cyan
-      Write-Host "  1) bubbleId:%  (cursorDiskKV) - chat bubbles" -ForegroundColor Gray
-      Write-Host "  2) checkpointId:%  (cursorDiskKV) - Composer checkpoints" -ForegroundColor Gray
-      Write-Host "  3) composerData:%  (cursorDiskKV) - Composer session metadata" -ForegroundColor Gray
-      Write-Host "  4) agentKv:blob:%  (cursorDiskKV) - agent/blob cache" -ForegroundColor Gray
-      Write-Host "  5) cursor.composer%  (ItemTable) - small UI state" -ForegroundColor Gray
-      $sub = Read-Host "Delete which pattern? (1-5, or Enter to skip)"
-      if ($sub -match '^[1-5]$') {
-        $table = if ($sub -eq '5') { 'ItemTable' } else { 'cursorDiskKV' }
-        $pattern = switch ($sub) { '1' { 'bubbleId:%' }; '2' { 'checkpointId:%' }; '3' { 'composerData:%' }; '4' { 'agentKv:blob:%' }; '5' { 'cursor.composer%' }; default { $null } }
+      Write-Host "--- View Count & Delete keys by pattern (run with Cursor closed) ---" -ForegroundColor Cyan
+      Write-Host "  1) View item counts for all categories" -ForegroundColor Gray
+      Write-Host "  2) bubbleId:%  (cursorDiskKV) - chat bubbles" -ForegroundColor Gray
+      Write-Host "  3) checkpointId:%  (cursorDiskKV) - Composer checkpoints" -ForegroundColor Gray
+      Write-Host "  4) composerData:%  (cursorDiskKV) - Composer session metadata" -ForegroundColor Gray
+      Write-Host "  5) agentKv:blob:%  (cursorDiskKV) - agent/blob cache" -ForegroundColor Gray
+      Write-Host "  6) cursor.composer%  (ItemTable) - small UI state" -ForegroundColor Gray
+      Write-Host "  7) Exit" -ForegroundColor Gray
+      $sub = Read-Host "Choose 1-7 (or Enter to skip)"
+      if ($sub -eq '7' -or $sub -eq '') { break }
+      if ($sub -match '^[1-6]$') {
+        if ($sub -eq '1') {
+          & npx tsx scripts/prune-state-vscdb.ts --count-categories
+          if ($LASTEXITCODE -ne 0) { Write-Host "Count script error. Ensure Cursor is closed and sqlite3 is installed." -ForegroundColor Yellow }
+        } else {
+        $table = if ($sub -eq '6') { 'ItemTable' } else { 'cursorDiskKV' }
+        $pattern = switch ($sub) { '2' { 'bubbleId:%' }; '3' { 'checkpointId:%' }; '4' { 'composerData:%' }; '5' { 'agentKv:blob:%' }; '6' { 'cursor.composer%' }; default { $null } }
         if ($pattern) {
+          $confirm = Read-Host "You are about to prune: $pattern ($table). Are you sure? [Y/N]"
+          if ($confirm -match '^[Yy]') {
           $ak = Read-Host "Delete (A)ll matching items, or (K)eep last N items? [A/K]"
           $keepLast = $null
           if ($ak -match '^[Kk]') {
@@ -102,13 +112,16 @@ switch ($choice) {
           Write-Host "Running: npx tsx scripts/prune-state-vscdb.ts $($argList -join ' ')" -ForegroundColor Yellow
           & npx tsx scripts/prune-state-vscdb.ts @argList
           if ($LASTEXITCODE -ne 0) { Write-Host "Prune/delete error. Ensure Cursor is closed and sqlite3 is installed." -ForegroundColor Yellow }
-          if ($sub -match '^[1-4]$') {
+          if ($sub -match '^[2-5]$') {
             Write-Host ""
             Write-Host "Final Note:" -ForegroundColor Cyan
-            Write-Host "  If you fully pruned the selected items (sub-options 1, 2, 3, or 4), after restarting Cursor you may encounter a run-time error when connecting to the server. You may need to create a ""New Agent"" to continue with your conversations." -ForegroundColor Gray
+            Write-Host "  If you fully pruned the selected items (sub-options 2, 3, 4, or 5), after restarting Cursor you may encounter a run-time error when connecting to the server. You may need to create a ""New Agent"" to continue with your conversations." -ForegroundColor Gray
           }
+          } else { Write-Host "Pruning cancelled." -ForegroundColor Yellow }
+        }
         }
       }
+      } while ($true)
     } finally { Pop-Location }
   }
 }

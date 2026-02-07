@@ -23,6 +23,7 @@
  *   --table           Table to delete from when using --delete-keys: ItemTable (default) or cursorDiskKV
  *   --delete-keys     Delete keys matching SQL LIKE pattern; then VACUUM. Requires Cursor closed.
  *   --keep-last N     With --delete-keys: keep the last N matching items (by rowid), delete the rest. Omit to delete all.
+ *   --count-categories Show item counts for the 5 categories (bubbleId:%, checkpointId:%, composerData:%, agentKv:blob:%, cursor.composer%). Read-only.
  */
 
 import { existsSync, statSync, readdirSync } from 'fs';
@@ -40,6 +41,7 @@ interface PruneOptions {
   analyze: boolean;
   checkIntegrity: boolean;
   globalOnlyIntegrity: boolean;
+  countCategories: boolean;
   deleteKeysPattern: string | null;
   deleteTable: TableName;
   keepLast: number | null;
@@ -54,6 +56,7 @@ function parseArgs(): PruneOptions {
     analyze: false,
     checkIntegrity: false,
     globalOnlyIntegrity: false,
+    countCategories: false,
     deleteKeysPattern: null,
     deleteTable: 'ItemTable',
     keepLast: null,
@@ -71,6 +74,8 @@ function parseArgs(): PruneOptions {
       options.checkIntegrity = true;
     } else if (arg === '--global-only') {
       options.globalOnlyIntegrity = true;
+    } else if (arg === '--count-categories') {
+      options.countCategories = true;
     } else if (arg === '--threshold' && i + 1 < args.length) {
       options.thresholdMb = parseInt(args[i + 1], 10);
       i++;
@@ -426,8 +431,64 @@ function checkIntegrity(filePath: string, label: string): boolean {
   }
 }
 
+const CATEGORIES: { table: TableName; pattern: string; label: string }[] = [
+  { table: 'cursorDiskKV', pattern: 'bubbleId:%', label: 'bubbleId:% (cursorDiskKV) - chat bubbles' },
+  { table: 'cursorDiskKV', pattern: 'checkpointId:%', label: 'checkpointId:% (cursorDiskKV) - Composer checkpoints' },
+  { table: 'cursorDiskKV', pattern: 'composerData:%', label: 'composerData:% (cursorDiskKV) - Composer session metadata' },
+  { table: 'cursorDiskKV', pattern: 'agentKv:blob:%', label: 'agentKv:blob:% (cursorDiskKV) - agent/blob cache' },
+  { table: 'ItemTable', pattern: 'cursor.composer%', label: 'cursor.composer% (ItemTable) - small UI state' },
+];
+
+/** Run SELECT COUNT(*) and SUM(LENGTH(value)) for each category and display to the user. Read-only. */
+function countCategories(filePath: string): void {
+  const sqlite3 = getSqlite3Command();
+  const sizeMb = getFileSizeMb(filePath);
+  console.log('\n=== Item counts by category (global state.vscdb) ===\n');
+  console.log(`Path: ${filePath}`);
+  console.log(`File size: ${sizeMb.toFixed(2)} MB\n`);
+  console.log('Category                                          | Count      | Est. size (MB)');
+  console.log('--------------------------------------------------|------------|----------------');
+
+  for (const { table, pattern, label } of CATEGORIES) {
+    try {
+      const escaped = pattern.replace(/'/g, "''");
+      const likeLiteral = `'${escaped}'`;
+      const countOut = runSqliteQuery(
+        filePath,
+        `SELECT COUNT(*) FROM ${table} WHERE key LIKE ${likeLiteral};`,
+        sqlite3
+      );
+      const count = parseInt(countOut.trim(), 10) || 0;
+      const sumOut = runSqliteQuery(
+        filePath,
+        `SELECT COALESCE(SUM(LENGTH(value)), 0) FROM ${table} WHERE key LIKE ${likeLiteral};`,
+        sqlite3
+      );
+      const totalBytes = parseInt(sumOut.trim(), 10) || 0;
+      const estMb = totalBytes / (1024 * 1024);
+      const labelPadded = (label.slice(0, 49) + ' ').slice(0, 50);
+      const countStr = count.toLocaleString().padStart(10);
+      const mbStr = estMb.toFixed(2).padStart(14);
+      console.log(`${labelPadded} | ${countStr} | ${mbStr}`);
+    } catch (e) {
+      console.log(`${label.slice(0, 50).padEnd(50)} | Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  console.log('');
+}
+
 function main() {
   const options = parseArgs();
+
+  if (options.countCategories) {
+    const globalPath = getGlobalStatePath();
+    if (!globalPath) {
+      console.log('Global state.vscdb not found. Cannot show counts.');
+      return;
+    }
+    countCategories(globalPath);
+    return;
+  }
 
   if (options.checkIntegrity) {
     if (options.globalOnlyIntegrity) {
