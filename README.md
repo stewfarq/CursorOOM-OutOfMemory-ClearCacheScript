@@ -69,26 +69,39 @@ As you use Cursor over time, the global `state.vscdb` can grow to **500 MB–1 G
 | **2** | Prune workspace state.vscdb only | Runs SQLite **VACUUM** on this project's state DB (e.g. `.vscode/state.vscdb` or `.cursor/state.vscdb`). | Reclaims space from deleted entries only. No behavioral impact. Safe. |
 | **3** | Prune global state.vscdb only | Runs SQLite **VACUUM** on the global `state.vscdb` (e.g. `%APPDATA%\Cursor\User\globalStorage\state.vscdb`). | Same as 2: reclaims free space only. No behavioral impact. Safe. |
 | **4** | Light cleanup (caches only) | Stops Cursor and deletes only: Cache, CachedData, Code Cache, GPUCache, logs. Does **not** delete workspaceStorage or History. | Recent workspaces and file history preserved. Cache rebuilds on next start. |
-| **5** | Analyze global state.vscdb | Runs a **read-only** report: file size, tables (ItemTable, cursorDiskKV), and top keys by value size. Then offers **sub-options** to delete keys by pattern (see below). | No change until you choose a sub-option and confirm. |
+| **5** | Analyze global state.vscdb | Runs a **read-only** report: file size, tables (ItemTable, cursorDiskKV), and top keys by value size. Then offers **sub-options** to view item counts or delete keys by pattern (see below). | No change until you choose a sub-option and confirm. |
 
-### 3.2 Option 5 — Sub-options (delete by pattern)
+### 3.2 Option 5 — Sub-options (view counts or delete by pattern)
 
-After the analysis report, you can optionally choose a pattern to delete:
+After the analysis report, a **sub-menu loops** so you can run multiple actions (view counts, then prune one category, then another, etc.). The prompt is **Choose 1–7 (or Enter to skip)**. Choose **7** or press **Enter** to exit the sub-menu.
 
-| Sub-option | Pattern | Table | Typical size impact | What you lose |
-|------------|---------|--------|----------------------|----------------|
-| **1** | `bubbleId:%` | cursorDiskKV | Often 100–400+ MB | Stored content of **past AI chat bubbles** (Composer/chat). You can't scroll back through old conversations; new chats work normally. |
-| **2** | `checkpointId:%` | cursorDiskKV | Often 100–300+ MB | **Composer checkpoints** (snapshots to restore session state). You can't restore older Composer states from the UI; current and new sessions unaffected. |
-| **3** | `composerData:%` | cursorDiskKV | Typically 1–50+ MB | **Composer session metadata** (context, panel state). Past session layout/context; new sessions work normally. |
-| **4** | `agentKv:blob:%` | cursorDiskKV | Often 100–400+ MB | **Cached agent/blob data** (model outputs, context). Cursor may re-download or regenerate; possible brief performance change. |
-| **5** | `cursor.composer%` | ItemTable | Usually &lt; 1 MB | Some **Cursor Composer UI state**. Minor. |
+| Sub-option | Action | Description |
+|------------|--------|-------------|
+| **1** | **View item counts** | **Read-only.** Shows a table with **Count** and **Est. size (MB)** for each category. No data is deleted. |
+| **2–6** | Delete by pattern | Prune a category (see table below). You are asked **Are you sure? [Y/N]** before any change; then **A** (all) or **K** (keep last N). |
+| **7** | **Exit** | Leave the sub-menu and finish option 5. |
 
-For each sub-option you can choose:
+**Categories for view (1) and for delete (2–6):**
+
+| Sub-option | Pattern | Table | Typical size impact | What you lose (if deleted) |
+|------------|---------|--------|----------------------|----------------------------|
+| **2** | `bubbleId:%` | cursorDiskKV | Often 100–400+ MB | Stored content of **past AI chat bubbles** (Composer/chat). You can't scroll back through old conversations; new chats work normally. |
+| **3** | `checkpointId:%` | cursorDiskKV | Often 100–300+ MB | **Composer checkpoints** (snapshots to restore session state). You can't restore older Composer states from the UI; current and new sessions unaffected. |
+| **4** | `composerData:%` | cursorDiskKV | Typically 1–50+ MB | **Composer session metadata** (context, panel state). Past session layout/context; new sessions work normally. |
+| **5** | `agentKv:blob:%` | cursorDiskKV | Often 100–400+ MB | **Cached agent/blob data** (model outputs, context). Cursor may re-download or regenerate; possible brief performance change. |
+| **6** | `cursor.composer%` | ItemTable | Usually &lt; 1 MB | Some **Cursor Composer UI state**. Minor. |
+
+**Sub-option 1 — View item counts (use and expected outcome):**
+
+- **Use:** Choose **1** to see **how many items** and **estimated size (MB)** per category without deleting anything. Helpful before pruning (e.g. "I have 25,000 agent blobs; I'll delete all but the last 500").
+- **Expected outcome:** The script runs `npx tsx scripts/prune-state-vscdb.ts --count-categories`. You see path, file size, then a table: **Category | Count | Est. size (MB)**. No files are modified.
+
+**Sub-options 2–6 (delete):** Before pruning, you must confirm **Are you sure? [Y/N]**; if **N**, pruning is cancelled and the menu is shown again. If **Y**:
 
 - **Delete (A)ll** — Remove all keys matching the pattern.
-- **Keep last N** — Delete only the "oldest" keys (by SQLite `rowid`), keeping the last N. Example: 10,000 items, keep 100 → 9,900 deleted.
+- **Keep last N** — Delete only the "oldest" keys (by SQLite `rowid`), keeping the last N.
 
-After running sub-options **1, 2, 3, or 4**, the script shows a **Final Note**: after restarting Cursor you may see a run-time error when connecting to the server and may need to create a **"New Agent"** to continue conversations.
+After pruning sub-options **2, 3, 4, or 5**, the script shows a **Final Note**: after restarting Cursor you may see a run-time error when connecting and may need to create a **"New Agent"** to continue conversations. The sub-menu then appears again until you choose **7** or **Enter**.
 
 ### 3.3 Underlying Script: `prune-state-vscdb.ts`
 
@@ -97,6 +110,7 @@ The PowerShell script calls `npx tsx scripts/prune-state-vscdb.ts` for options 2
 - **VACUUM** (options 2/3): `--workspace`, `--global`, `--threshold <MB>`.
 - **Analyze:** `--analyze` (read-only report).
 - **Delete by pattern:** `--analyze --table <ItemTable|cursorDiskKV> --delete-keys "<pattern>" [--keep-last N]`.
+- **Count categories:** `--count-categories` — runs `SELECT COUNT(*)` and `SUM(LENGTH(value))` per category and prints a table (path, file size, category | count | est. size MB). Read-only; no deletion. Used by option 5 sub-option 1.
 - **Integrity check:** `--check-integrity [--global-only]` (SQLite `PRAGMA quick_check` and `integrity_check`).
 
 You can run these commands directly from a shell if you prefer not to use the PowerShell menu.
@@ -137,9 +151,11 @@ You can run these commands directly from a shell if you prefer not to use the Po
 - **Option 2 / 3:** Path and size of each `state.vscdb` considered; "above/below threshold"; before/after size and space saved after VACUUM; "Pruning complete" with count and total reclaimed.
 - **Option 4:** Same as 1 but only cache dirs; "Workspace list and History kept."
 - **Option 5:**  
-  - **Analyze:** "Global state.vscdb analysis", path, file size, tables, per-table total value size, top 50 keys by size, then "Sub-options to free space" and commands.  
-  - **If sub-option chosen:** "Deleting keys by pattern", count (and "keeping last N" if applicable), "Running VACUUM", before/after size, "Freed: X MB".  
-  - **If sub-option 1–4:** "Final Note" about possible run-time error and creating a "New Agent".
+  - **Analyze:** "Global state.vscdb analysis", path, file size, tables, per-table total value size, top 50 keys by size, then "Sub-options" including "6) View item counts for all categories", and prompt "Choose 1–6 (or Enter to skip)".  
+  - **Sub-menu loops** until user chooses **7** or **Enter**. Prompt: "Choose 1-7 (or Enter to skip)".
+  - **If sub-option 1:** "Item counts by category (global state.vscdb)", path, file size, table: Category | Count | Est. size (MB). No deletion.
+  - **If sub-option 2–6 (delete):** "You are about to prune: … Are you sure? [Y/N]"; if Y, "Delete (A)ll or (K)eep last N?", then "Deleting keys by pattern", VACUUM, "Freed: X MB". If N, "Pruning cancelled."
+  - **If sub-option 2–5:** "Final Note" about possible run-time error and "New Agent".
 
 ### 6.2 Side Effects (on disk)
 
@@ -147,7 +163,8 @@ You can run these commands directly from a shell if you prefer not to use the Po
 - **Option 2:** Workspace `state.vscdb` file rewritten (smaller) by VACUUM.
 - **Option 3:** Global `state.vscdb` rewritten (smaller) by VACUUM.
 - **Option 4:** Only cache dirs removed; workspaceStorage and History unchanged.
-- **Option 5 + sub-option:** Rows deleted from global `state.vscdb` (cursorDiskKV or ItemTable), then VACUUM run on that file.
+- **Option 5 + sub-option 1–5 (delete):** Rows deleted from global `state.vscdb` (cursorDiskKV or ItemTable), then VACUUM run on that file.
+- **Option 5 + sub-option 6 (view counts):** No change on disk; read-only queries.
 
 No separate log file is created unless you redirect output (e.g. `.\scripts\clear-cursor-cache.ps1 > log.txt`).
 
@@ -232,6 +249,12 @@ A: Yes. Use **option 2** (workspace) or **option 3** (global). They only run SQL
 **Q: What does "keep last N" mean?**  
 A: For the chosen pattern, the script keeps the N most recently stored rows (by SQLite `rowid`) and deletes the rest. So you retain the "newest" N items (e.g. last 100 chat bubbles or blobs).
 
+**Q: How do I see how many items are in each category without deleting?**  
+A: Choose **option 5** (Analyze), then **sub-option 1** (View item counts for all categories). You get a table with Count and Est. size (MB) for each category. No data is deleted. You can also run `npx tsx scripts/prune-state-vscdb.ts --count-categories` from the repo root.
+
+**Q: Can I prune more than one category in one go?**  
+A: Yes. Under option 5 the sub-menu **loops**: after each action (view counts or prune) the menu is shown again. Choose **7** or press **Enter** to exit. Before any prune you must confirm **Are you sure? [Y/N]**.
+
 **Q: Does this work on macOS or Linux?**  
 A: The PowerShell script is written for Windows. The underlying `prune-state-vscdb.ts` uses paths that can be extended for macOS/Linux; you could run it with `npx tsx scripts/prune-state-vscdb.ts` and the same flags from a shell.
 
@@ -243,7 +266,7 @@ A: The PowerShell script is written for Windows. The underlying `prune-state-vsc
 |--------|---------|
 | **Use** | Reduce Cursor disk use and memory pressure; recover from OOM and repeated crashes caused by large `state.vscdb` and caches. |
 | **Scope** | Cursor cache dirs and SQLite `state.vscdb` (workspace + global); analyze and optional key-level pruning with "keep last N". |
-| **Features** | Five main options (full cleanup, workspace VACUUM, global VACUUM, light cleanup, analyze + sub-options); sub-options 1–5 for pattern-based delete; integrity check via TS script. |
+| **Features** | Five main options; option 5 sub-menu loops (1=view counts with Est. size MB, 2–6=delete by category, 7=exit); Are you sure? [Y/N] before pruning; integrity check via TS script. |
 | **Benefits** | Fewer OOM/crashes, targeted pruning, transparency, graduated safety, no impact on project files. |
 | **Risks** | Loss of workspace list/history (option 1 only), loss of chat/checkpoint/blob data (sub-options 1–4), possible "New Agent" after restart; mitigated by prompts and Final Note. |
 | **Outputs** | Console messages and on-disk changes (cleaned dirs, shrunk/reduced `state.vscdb`). |
