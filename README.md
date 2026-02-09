@@ -12,7 +12,7 @@
 
 The **Clear Cursor Cache** script (`scripts/clear-cursor-cache.ps1`) is an interactive PowerShell tool that helps you **reduce Cursor's disk usage and memory pressure** by cleaning caches and pruning SQLite state databases (`state.vscdb`). It is intended for users who experience:
 
-- **Out of Memory (OOM)** errors
+- **Out of Memory (OOM)** errors (e.g. The window terminated unexpectedly (reason: 'oom', code: -536870904)
 - **Repeated Cursor crashes** after long use
 - **Very large** `state.vscdb` files (e.g. hundreds of MB to over 1 GB)
 
@@ -272,3 +272,4 @@ A: The PowerShell script is written for Windows. The underlying `prune-state-vsc
 | **Outputs** | Console messages and on-disk changes (cleaned dirs, shrunk/reduced `state.vscdb`). |
 
 This script is provided to help the community manage Cursor's local state when it grows too large. Use options 2 or 3 for the safest space reclaim; use option 5 with sub-options when you need aggressive reduction and accept losing older chat/checkpoint/blob data (with optional "keep last N").
+
